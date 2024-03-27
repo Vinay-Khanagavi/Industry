@@ -135,6 +135,7 @@ def create_pdf_with_table(shapes_positions: dict):
     shapes = []  # List to track unique shapes
 
     shpae_count = 0
+    
     for shape, (x, y) in shapes_positions.items():
         # Generate a unique key based on size and material
         key = (shape.width, shape.height, shape.material_spec, shape.size_of_material, shape.shape_type)
