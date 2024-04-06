@@ -246,9 +246,8 @@ def save_visualization_as_pdf(shapes_positions, sheet_length, sheet_width):
         # Create a dictionary to track counts for each unique shape size
         size_count_dict = {'circle': {}, 'rectangle': {}, 'square': {}}
 
-        # Create a counter for all circle shapes to assign unique numbers
-        circle_counter = 0
-        shape_count = 0
+        # Create a single counter for all shapes
+        shape_counter = 0
         for shape, (x, y) in shapes_positions.items():
             if shape.shape_type == 'circle':
                 # Include only the radius in the shape key for circles
@@ -260,15 +259,8 @@ def save_visualization_as_pdf(shapes_positions, sheet_length, sheet_width):
             if shape_key in size_count_dict[shape.shape_type]:
                 count = size_count_dict[shape.shape_type][shape_key]
             else:
-                if shape.shape_type == 'circle':
-                    # Use the circle counter for unique numbering
-                    circle_counter += 1
-                    count = circle_counter
-                else:
-                    # Increment the counter for this shape type and size
-                    shape_count += 1
-                    count = shape_count
-
+                shape_counter += 1
+                count = shape_counter
                 # Store this count for this particular shape size
                 size_count_dict[shape.shape_type][shape_key] = count
 
