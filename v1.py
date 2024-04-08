@@ -285,7 +285,7 @@ def save_visualization_as_pdf(shapes_positions, sheet_length, sheet_width):
 
         
 
-def save_as_pdf(shapes_positions, sheet_length, sheet_width  ):
+def save_as_pdf(shapes_positions, sheet_length, sheet_width, padding=10):
     global pdf_count 
     pdf_count += 1
 
@@ -294,8 +294,8 @@ def save_as_pdf(shapes_positions, sheet_length, sheet_width  ):
     if pdf_filename:
         with PdfPages(pdf_filename) as pdf:
             fig, ax = plt.subplots()
-            ax.set_xlim(0, sheet_width)
-            ax.set_ylim(0, sheet_length)
+            ax.set_xlim(-padding, sheet_width + padding)  # Adjust the x-axis limits
+            ax.set_ylim(-padding, sheet_length + padding)  # Adjust the y-axis limits
             ax.set_aspect('equal', adjustable='box')
 
             for shape, (x, y) in shapes_positions.items():
@@ -364,12 +364,12 @@ async def generate_files(shapes: List[Data], sheet_length: int, sheet_width: int
                 shape_type=shape_data.shape_type,
                 width=shape_data.width,
                 height=shape_data.height if shape_data.height else shape_data.width,
-                part_no=shape_data.part_no,  # Pass the part number here
-                part_description=shape_data.part_description,
+                part_no=shape_data.part_no,
+                part_description=shape_data.part_description,  # Pass the part description here
                 part_code=shape_data.part_code,
                 material_spec=shape_data.material_spec,
                 size_of_material=shape_data.size_of_material,
-                quantity=1,  # Each shape is now considered as a single instance
+                quantity=1,
                 unit=shape_data.unit
             ))
 

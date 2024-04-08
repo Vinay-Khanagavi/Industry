@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from matplotlib.patches import Rectangle, Circle
 from matplotlib.backends.backend_pdf import PdfPages
 import ezdxf
+import copy
 from fastapi.middleware.cors import CORSMiddleware  # Import CORS middleware
 
 pdf_count = 0
@@ -197,28 +198,65 @@ def pack_shapes_on_sheet(grouped_shapes, sheet_length, sheet_width, spacing):
     sheet = Sheet(sheet_length, sheet_width, spacing)
     shapes_positions = {}
     remaining = {}
-    current_x = 0  # Track the current column
 
     for key, shapes_list in grouped_shapes.items():
         for shape in shapes_list:
-            x, y = sheet.find_empty_space(shape, start_x=current_x)
-            if x != -1 and y != -1:
-                # Check if placing the shape will reach the end of the top
-                if y + shape.width + spacing >= sheet_width:
-                    current_x += 1  # Move to the next column
-                    x, y = sheet.find_empty_space(shape, start_x=current_x)
+            original_shape = shape
+            rotated_shape = rotate_shape(shape, 90)  # Create a rotated copy of the shape
 
-                if x != -1 and y != -1:
-                    sheet.place_shape(x + spacing, y + spacing, shape)
-                    shapes_positions[shape] = (x, y)
-                    print(f"Placed {shape.shape_type} at position ({x}, {y})")
-                else:
-                    if key not in remaining:
-                        remaining[key] = []
-                    remaining[key].append(shape)
-                    print(f"No space available for {shape.shape_type}")
+            orig_x, orig_y = sheet.find_empty_space(original_shape)
+            rot_x, rot_y = sheet.find_empty_space(rotated_shape)
+
+            # Choose the placement that provides a better fit
+            if is_better_fit(rot_x, rot_y, rotated_shape, sheet):
+                shape = rotated_shape
+                x, y = rot_x, rot_y
+            else:
+                x, y = orig_x, orig_y
+
+            if x != -1 and y != -1:
+                sheet.place_shape(x, y, shape)
+                shapes_positions[shape] = (x, y)
+            else:
+                if key not in remaining:
+                    remaining[key] = []
+                remaining[key].append(shape)
 
     return sheet, shapes_positions, remaining
+
+def rotate_shape(shape, angle):
+    rotated_shape = copy.deepcopy(shape)
+    if angle == 90:
+        rotated_shape.width, rotated_shape.height = rotated_shape.height, rotated_shape.width
+        rotated_shape.rotation = 90
+    elif angle == 180:
+        rotated_shape.rotation = 180
+    elif angle == 270:
+        rotated_shape.width, rotated_shape.height = rotated_shape.height, rotated_shape.width
+        rotated_shape.rotation = 270
+    return rotated_shape
+    return rotated_shape
+
+def is_better_fit(x, y, shape, sheet):
+    top_left_distance = x ** 2 + y ** 2
+    top_right_distance = x ** 2 + (sheet.width - y - shape.width) ** 2
+    bottom_left_distance = (sheet.length - x - shape.height) ** 2 + y ** 2
+    bottom_right_distance = (sheet.length - x - shape.height) ** 2 + (sheet.width - y - shape.width) ** 2
+
+    min_distance = min(top_left_distance, top_right_distance, bottom_left_distance, bottom_right_distance)
+
+    # If multiple placements have the same minimum distance, choose the one with the smallest area
+    if top_left_distance == min_distance:
+        return True
+    elif top_right_distance == min_distance:
+        return shape.width < shape.height
+    elif bottom_left_distance == min_distance:
+        return shape.width > shape.height
+    else:
+        return False
+
+    # If the above criteria don't differentiate, choose the placement with the smallest x and y coordinates
+    return x < sheet.length / 2 and y < sheet.width / 2
 
 def calculate_sheet_utilization(sheet: Sheet, shapes_positions: dict):
     total_cells = sheet.length * sheet.width
@@ -285,7 +323,7 @@ def save_visualization_as_pdf(shapes_positions, sheet_length, sheet_width):
 
         
 
-def save_as_pdf(shapes_positions, sheet_length, sheet_width  ):
+def save_as_pdf(shapes_positions, sheet_length, sheet_width, padding=10):
     global pdf_count 
     pdf_count += 1
 
@@ -294,8 +332,8 @@ def save_as_pdf(shapes_positions, sheet_length, sheet_width  ):
     if pdf_filename:
         with PdfPages(pdf_filename) as pdf:
             fig, ax = plt.subplots()
-            ax.set_xlim(0, sheet_width)
-            ax.set_ylim(0, sheet_length)
+            ax.set_xlim(-padding, sheet_width + padding)  # Adjust the x-axis limits
+            ax.set_ylim(-padding, sheet_length + padding)  # Adjust the y-axis limits
             ax.set_aspect('equal', adjustable='box')
 
             for shape, (x, y) in shapes_positions.items():
@@ -364,12 +402,12 @@ async def generate_files(shapes: List[Data], sheet_length: int, sheet_width: int
                 shape_type=shape_data.shape_type,
                 width=shape_data.width,
                 height=shape_data.height if shape_data.height else shape_data.width,
-                part_no=shape_data.part_no,  # Pass the part number here
-                part_description=shape_data.part_description,
+                part_no=shape_data.part_no,
+                part_description=shape_data.part_description,  # Pass the part description here
                 part_code=shape_data.part_code,
                 material_spec=shape_data.material_spec,
                 size_of_material=shape_data.size_of_material,
-                quantity=1,  # Each shape is now considered as a single instance
+                quantity=1,
                 unit=shape_data.unit
             ))
 
