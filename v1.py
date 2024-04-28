@@ -283,8 +283,6 @@ def save_visualization_as_pdf(shapes_positions, sheet_length, sheet_width):
         print(size_count_dict)
         pdf.savefig(fig)
 
-        
-
 def save_as_pdf(shapes_positions, sheet_length, sheet_width, padding=10):
     global pdf_count 
     pdf_count += 1
