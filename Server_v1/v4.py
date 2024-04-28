@@ -261,7 +261,6 @@ def save_visualization_as_pdf(shapes_positions, sheet_length, sheet_width):
             else:
                 shape_counter += 1
                 count = shape_counter
-
                 # Store this count for this particular shape size
                 size_count_dict[shape.shape_type][shape_key] = count
 
@@ -286,7 +285,6 @@ def save_visualization_as_pdf(shapes_positions, sheet_length, sheet_width):
 def save_as_pdf(shapes_positions, sheet_length, sheet_width, padding=10):
     global pdf_count 
     pdf_count += 1
-
     pdf_filename = "output"+ str(pdf_count) +".pdf"
 
     if pdf_filename:
