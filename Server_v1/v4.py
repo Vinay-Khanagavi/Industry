@@ -63,7 +63,8 @@ class Sheet:
     def place_shape(self, x, y, shape):
         for i in range(shape.height + self.space):
             for j in range(shape.width + self.space):
-                self.sheet[x + i][y + j] = 1
+                if x + i < self.length and y + j < self.width:
+                    self.sheet[x + i][y + j] = 1
     
     def is_valid_location(self, x, y, shape :Shape):
         for i in range(shape.height ):
@@ -369,26 +370,27 @@ async def generate_files(shapes: List[Data], sheet_length: int, sheet_width: int
                 unit=shape_data.unit
             ))
 
-    # Step 1: Group the shapes by material_spec
-    material_groups = {}
-    for shape in shapes_to_pack:
-        material = shape.material_spec
-        if material not in material_groups:
-            material_groups[material] = []
-        material_groups[material].append(shape)
+  
+    sorted_shapes = {}
 
-    # Step 2: Within each material group, group the shapes by size_of_material (thickness)
-    thickness_groups = {}
-    for material, shapes_list in material_groups.items():
-        thickness_groups[material] = {}
-        for shape in shapes_list:
-            thickness = shape.size_of_material.split(" ")[-1].replace("THK", "")
-            if thickness not in thickness_groups[material]:
-                thickness_groups[material][thickness] = []
-            thickness_groups[material][thickness].append(shape)
+    for shape in shapes_to_pack:
+        size_of_material = shape.size_of_material
+        parts = size_of_material.split(" x ")
+        thickness = int(parts[-1].replace("THK", ""))
+
+        if shape.material_spec not in sorted_shapes:
+            sorted_shapes[shape.material_spec] = {}
+
+        if thickness not in sorted_shapes[shape.material_spec]:
+            sorted_shapes[shape.material_spec][thickness] = []
+
+        sorted_shapes[shape.material_spec][thickness].append(shape)
+
+    print("sorted_shapes: " + str(sorted_shapes))
+    
 
     # Perform packing, optimization, and file generation for each thickness group
-    for material, thickness_group in thickness_groups.items():
+    for material, thickness_group in sorted_shapes.items():
         for thickness, shapes_list in thickness_group.items():
             print(f"Packing shapes for {material} with thickness {thickness}")
 

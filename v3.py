@@ -1,3 +1,4 @@
+import itertools
 from io import BytesIO
 import os
 from zipfile import ZipFile
@@ -19,7 +20,6 @@ merge_pdfs_count = 0
 output_count = 0
 detailed_output_count = 0
 table_count = 0
-
 
 class Data(BaseModel):
     shape_type: str
@@ -61,16 +61,17 @@ class Sheet:
         self.space = spacing
         self.remaining = []
     def place_shape(self, x, y, shape):
-        for i in range(shape.height + self.space):
-            for j in range(shape.width + self.space):
+        for i, j in itertools.product(range(shape.height + self.space), range(shape.width + self.space)):
+            if x + i < self.length and y + j < self.width:
                 self.sheet[x + i][y + j] = 1
     
     def is_valid_location(self, x, y, shape :Shape):
-        for i in range(shape.height ):
-            for j in range(shape.width):
-                if x + i >= self.length or y + j >= self.width or self.sheet[x + i][y + j] == 1:
-                    return False
-        return True
+        return not any(
+            x + i >= self.length
+            or y + j >= self.width
+            or self.sheet[x + i][y + j] == 1
+            for i, j in itertools.product(range(shape.height), range(shape.width))
+        )
     def find_empty_space(self, shape:Shape, start_x=0, end_x=None, start_y=0, end_y=None):
         if end_x is None:
             end_x = self.length - shape.height - self.space + 1
@@ -80,28 +81,25 @@ class Sheet:
             while start_x < end_x:
                 if self.is_valid_location(start_x, start_y, shape):
                     return start_x, start_y
-                start_x += 1
-            start_y += 1
-            start_x = 0  # Reset start_x for the next column
-        return -1, -1  # Return if no empty space found
-
-
+                start_x += 1    
+            start_y += 1    
+            start_x = 0  
+        return -1, -1  
 
     def print(self):
         for i in range(self.width):
             for j in range(self.length):
-                print(str(self.sheet[i][j]) , end="")
+                print(self.sheet[i][j], end="")
             print("")
 
 def merge_pdfs(pdf_files):
-    
     global merge_pdfs_count
     merge_pdfs_count += 1
-    output_file = "merged" + str(merge_pdfs_count) + ".pdf"
-    
+    output_file = f"merged{merge_pdfs_count}.pdf"
+
     # Create a PDF merger object
     merger = PdfMerger()
-    
+
     for file in pdf_files:
         merger.append(file)
     # Write the merged PDF to a file
@@ -179,7 +177,14 @@ def create_pdf_with_table(shapes_positions: dict):
 def group_shapes(shapes):
     grouped_shapes = {}
     for shape in shapes:
-        key = (shape.material_spec, shape.size_of_material, shape.shape_type)
+        material_spec = shape.material_spec
+        size_of_material = shape.size_of_material
+        thickness = size_of_material.split(" ")[-1].replace("THK", "")
+        shape_type = shape.shape_type
+        width = shape.width
+        height = shape.height
+
+        key = (material_spec, thickness, shape_type, width, height)
         if key not in grouped_shapes:
             grouped_shapes[key] = []
         grouped_shapes[key].append(shape)
@@ -222,11 +227,10 @@ def pack_shapes_on_sheet(grouped_shapes, sheet_length, sheet_width, spacing):
 
 def calculate_sheet_utilization(sheet: Sheet, shapes_positions: dict):
     total_cells = sheet.length * sheet.width
-    occupied_cells = 0
-
-    for shape, (x, y) in shapes_positions.items():
-        occupied_cells += (shape.width + sheet.space) * (shape.height + sheet.space)
-
+    occupied_cells = sum(
+        (shape.width + sheet.space) * (shape.height + sheet.space)
+        for shape, (x, y) in shapes_positions.items()
+    )
     wastage_percentage = ((total_cells - occupied_cells) / total_cells) * 100
     occupation_percentage = (occupied_cells / total_cells) * 100
 
@@ -236,57 +240,61 @@ def save_visualization_as_pdf(shapes_positions, sheet_length, sheet_width):
     global detailed_output_count
     detailed_output_count += 1
 
-    filename = "output_file" + str(detailed_output_count) + ".pdf"
+    filename = f"output_file{detailed_output_count}.pdf"
     with PdfPages(filename) as pdf:
-        fig, ax = plt.subplots()
-        ax.set_xlim(0, sheet_width)
-        ax.set_ylim(0, sheet_length)
-        ax.set_aspect('equal', adjustable='box')
+        _extracted_from_save_visualization_as_pdf_7(
+            sheet_width, sheet_length, shapes_positions, pdf
+        )
 
-        # Create a dictionary to track counts for each unique shape size
-        size_count_dict = {'circle': {}, 'rectangle': {}, 'square': {}}
 
-        # Create a single counter for all shapes
-        shape_counter = 0
-        for shape, (x, y) in shapes_positions.items():
-            if shape.shape_type == 'circle':
-                # Include only the radius in the shape key for circles
-                shape_key = (shape.width / 2,)
-            else:
-                shape_key = (shape.width, shape.height)
+# TODO Rename this here and in `save_visualization_as_pdf`
+def _extracted_from_save_visualization_as_pdf_7(sheet_width, sheet_length, shapes_positions, pdf):
+    fig, ax = plt.subplots()
+    ax.set_xlim(0, sheet_width)
+    ax.set_ylim(0, sheet_length)
+    ax.set_aspect('equal', adjustable='box')
 
-            # Check if the shape's size has already been encountered
-            if shape_key in size_count_dict[shape.shape_type]:
-                count = size_count_dict[shape.shape_type][shape_key]
-            else:
-                shape_counter += 1
-                count = shape_counter
+    # Create a dictionary to track counts for each unique shape size
+    size_count_dict = {'circle': {}, 'rectangle': {}, 'square': {}}
 
-                # Store this count for this particular shape size
-                size_count_dict[shape.shape_type][shape_key] = count
+    # Create a single counter for all shapes
+    shape_counter = 0
+    for shape, (x, y) in shapes_positions.items():
+        shape_key = (
+            (shape.width / 2,)
+            if shape.shape_type == 'circle'
+            else (shape.width, shape.height)
+        )
+        # Check if the shape's size has already been encountered
+        if shape_key in size_count_dict[shape.shape_type]:
+            count = size_count_dict[shape.shape_type][shape_key]
+        else:
+            shape_counter += 1
+            count = shape_counter
+            # Store this count for this particular shape size
+            size_count_dict[shape.shape_type][shape_key] = count
 
-            if shape.shape_type == 'rectangle':
-                rect = Rectangle((y, x), shape.width, shape.height, linewidth=1, edgecolor='black', facecolor='none')
-                ax.add_patch(rect)
-                plt.text(y + shape.width / 2, x + shape.height / 2, f' {count}', ha='center', va='center', fontsize=8)
-            elif shape.shape_type == 'circle':
-                circle = Circle((y + shape.width / 2, x + shape.width / 2), shape.width / 2, edgecolor='black',
-                                facecolor='none')
-                ax.add_patch(circle)
-                plt.text(y + shape.width / 2, x + shape.width / 2, f' {count}', ha='center', va='center',
-                            fontsize=8)
-            elif shape.shape_type == 'square':
-                square = Rectangle((y, x), shape.width, shape.height, linewidth=1, edgecolor='black', facecolor='none')
-                ax.add_patch(square)
-                plt.text(y + shape.width / 2, x + shape.height / 2, f' {count}', ha='center', va='center',
-                            fontsize=8)
-        print(size_count_dict)
-        pdf.savefig(fig)
+        if shape.shape_type == 'rectangle':
+            rect = Rectangle((y, x), shape.width, shape.height, linewidth=1, edgecolor='black', facecolor='none')
+            ax.add_patch(rect)
+            plt.text(y + shape.width / 2, x + shape.height / 2, f' {count}', ha='center', va='center', fontsize=8)
+        elif shape.shape_type == 'circle':
+            circle = Circle((y + shape.width / 2, x + shape.width / 2), shape.width / 2, edgecolor='black',
+                            facecolor='none')
+            ax.add_patch(circle)
+            plt.text(y + shape.width / 2, x + shape.width / 2, f' {count}', ha='center', va='center',
+                        fontsize=8)
+        elif shape.shape_type == 'square':
+            square = Rectangle((y, x), shape.width, shape.height, linewidth=1, edgecolor='black', facecolor='none')
+            ax.add_patch(square)
+            plt.text(y + shape.width / 2, x + shape.height / 2, f' {count}', ha='center', va='center',
+                        fontsize=8)
+    print(size_count_dict)
+    pdf.savefig(fig)
 
 def save_as_pdf(shapes_positions, sheet_length, sheet_width, padding=10):
     global pdf_count 
     pdf_count += 1
-
     pdf_filename = "output"+ str(pdf_count) +".pdf"
 
     if pdf_filename:
@@ -371,31 +379,51 @@ async def generate_files(shapes: List[Data], sheet_length: int, sheet_width: int
                 unit=shape_data.unit
             ))
 
-    grouped_shapes = group_shapes(shapes_to_pack)
+    # Step 1: Group the shapes by material_spec
+    material_groups = {}
+    for shape in shapes_to_pack:
+        material = shape.material_spec
+        if material not in material_groups:
+            material_groups[material] = []
+        material_groups[material].append(shape)
 
-    for material_group_key, material_group in grouped_shapes.items():
-        print(f"Packing shapes for {material_group_key}")
+    # Step 2: Within each material group, group the shapes by size_of_material (thickness)
+    thickness_groups = {}
+    for material, shapes_list in material_groups.items():
+        thickness_groups[material] = {}
+        for shape in shapes_list:
+            thickness = shape.size_of_material.split(" ")[-1].replace("THK", "")
+            if thickness not in thickness_groups[material]:
+                thickness_groups[material][thickness] = []
+            thickness_groups[material][thickness].append(shape)
 
-        # Perform packing on the sheet
-        sp = first_fit_decreasing(material_group)
-        group_shapes_ = group_shapes(sp)
-        sheet, positions, remaining_shapes = pack_shapes_on_sheet(group_shapes_, sheet_length, sheet_width, spacing)
+    # Perform packing, optimization, and file generation for each thickness group
+    for material, thickness_group in thickness_groups.items():
+        for thickness, shapes_list in thickness_group.items():
+            print(f"Packing shapes for {material} with thickness {thickness}")
 
-        # Generate and save PDFs, DXFs, and tables
-        save_as_pdf(positions, sheet_length, sheet_width)
-        save_visualization_as_pdf(positions, sheet_length, sheet_width)
-        save_as_dxf(positions)
-        create_pdf_with_table(shapes_positions=positions)
-        merge_pdfs(["output_file" + str(detailed_output_count) + ".pdf", "output_detailed" + str(table_count) + ".pdf"])
+            # Perform packing on the sheet
+            sp = first_fit_decreasing(shapes_list)
+            group_shapes_ = group_shapes(sp)
+            sheet, positions, remaining_shapes = pack_shapes_on_sheet(group_shapes_, sheet_length, sheet_width, spacing)
 
-        # If there are remaining shapes, repeat the packing and generation process
-        while len(remaining_shapes) > 0:
-            positions, remaining_shapes = pack_shapes_on_sheet(remaining_shapes, sheet_length, sheet_width, spacing)
+            # Generate and save PDFs, DXFs, and tables
             save_as_pdf(positions, sheet_length, sheet_width)
             save_visualization_as_pdf(positions, sheet_length, sheet_width)
             save_as_dxf(positions)
             create_pdf_with_table(shapes_positions=positions)
             merge_pdfs(["output_file" + str(detailed_output_count) + ".pdf", "output_detailed" + str(table_count) + ".pdf"])
+
+            # If there are remaining shapes, repeat the packing and generation process
+            remaining_thickness_group = {thickness: remaining_shapes}
+            while len(remaining_thickness_group[thickness]) > 0:
+                positions, remaining_shapes = pack_shapes_on_sheet(remaining_thickness_group[thickness], sheet_length, sheet_width, spacing)
+                remaining_thickness_group[thickness] = remaining_shapes
+                save_as_pdf(positions, sheet_length, sheet_width)
+                save_visualization_as_pdf(positions, sheet_length, sheet_width)
+                save_as_dxf(positions)
+                create_pdf_with_table(shapes_positions=positions)
+                merge_pdfs(["output_file" + str(detailed_output_count) + ".pdf", "output_detailed" + str(table_count) + ".pdf"])
 
     return {"response": 200}
 
