@@ -12,6 +12,7 @@ from matplotlib.patches import Rectangle, Circle
 from matplotlib.backends.backend_pdf import PdfPages
 import ezdxf
 from fastapi.middleware.cors import CORSMiddleware  # Import CORS middleware
+import json
 
 pdf_count = 0
 dxf_count = 0
@@ -20,6 +21,8 @@ output_count = 0
 detailed_output_count = 0
 table_count = 0
 
+sorted_shapes = {}
+remaining_shapes = []
 
 class Data(BaseModel):
     shape_type: str
@@ -136,26 +139,39 @@ def create_pdf_with_table(shapes_positions: dict):
     shapes = []  # List to track unique shapes
 
     shpae_count = 0
-    
+    shape_counter = 0
+    size_count_dict = {'circle': {}, 'rectangle': {}, 'square': {}}
+
     for shape, (x, y) in shapes_positions.items():
         # Generate a unique key based on size and material
         key = (shape.width, shape.height, shape.material_spec, shape.size_of_material, shape.shape_type)
-
+            
         # Check if the shape has already been encountered
         if key in shape_counts:
             shape_counts[key] += 1
         else:
             shape_counts[key] = 1
-            shapes.append(shape)
-
-            # Assuming each shape has corresponding data; adjust this part according to your data structure
-            
+            shapes.append(shape)            
             
     for shape in shapes:
         key = (shape.width, shape.height, shape.material_spec, shape.size_of_material, shape.shape_type)
+        if shape.shape_type == 'circle':
+                # Include only the radius in the shape key for circles
+            shape_key = (shape.width / 2,)
+        else:
+            shape_key = (shape.width, shape.height)
 
+            # Check if the shape's size has already been encountered
+        if shape_key in size_count_dict[shape.shape_type]:
+            count = size_count_dict[shape.shape_type][shape_key]
+        else:
+            shape_counter += 1
+            count = shape_counter
+                # Store this count for this particular shape size
+            size_count_dict[shape.shape_type][shape_key] = count
+            
         data_for_shape = [
-            str(shape_counts[key]),  # Update numbering based on count
+            str(size_count_dict[shape.shape_type][shape_key]),  
             shape.part_description,
             shape.material_spec,
             shape.size_of_material,
@@ -197,10 +213,10 @@ def next_fit_decreasing(shapes):
 def pack_shapes_on_sheet(grouped_shapes, sheet_length, sheet_width, spacing):
     sheet = Sheet(sheet_length, sheet_width, spacing)
     shapes_positions = {}
-    remaining = {}
     current_x = 0  # Track the current column
 
     for key, shapes_list in grouped_shapes.items():
+        global remaining_shapes
         for shape in shapes_list:
             x, y = sheet.find_empty_space(shape, start_x=current_x)
             if x != -1 and y != -1:
@@ -208,18 +224,26 @@ def pack_shapes_on_sheet(grouped_shapes, sheet_length, sheet_width, spacing):
                 if y + shape.width + spacing >= sheet_width:
                     current_x += 1  # Move to the next column
                     x, y = sheet.find_empty_space(shape, start_x=current_x)
-
+                    
                 if x != -1 and y != -1:
                     sheet.place_shape(x + spacing, y + spacing, shape)
                     shapes_positions[shape] = (x, y)
                     print(f"Placed {shape.shape_type} at position ({x}, {y})")
+                    # if remaining_shapes:
+                        # remaining_shapes.remove(shape)
                 else:
-                    if key not in remaining:
-                        remaining[key] = []
-                    remaining[key].append(shape)
                     print(f"No space available for {shape.shape_type}")
+                    # if key not in remaining_shapes:
+                    #     remaining_shapes[key] = []
+                    remaining_shapes.append(shape)
+                    
+                    print(f"No space available for {shape.shape_type}")
+            else:
+                print(f"No space available ")
+                remaining_shapes.append(shape)
+                print(f"No space available for {shape.shape_type}")
 
-    return sheet, shapes_positions, remaining
+    return sheet, shapes_positions
 
 def calculate_sheet_utilization(sheet: Sheet, shapes_positions: dict):
     total_cells = sheet.length * sheet.width
@@ -236,6 +260,8 @@ def calculate_sheet_utilization(sheet: Sheet, shapes_positions: dict):
 def save_visualization_as_pdf(shapes_positions, sheet_length, sheet_width):
     global detailed_output_count
     detailed_output_count += 1
+    
+    
 
     filename = "output_file" + str(detailed_output_count) + ".pdf"
     with PdfPages(filename) as pdf:
@@ -287,6 +313,7 @@ def save_as_pdf(shapes_positions, sheet_length, sheet_width, padding=10):
     global pdf_count 
     pdf_count += 1
     pdf_filename = "output"+ str(pdf_count) +".pdf"
+    objects = []
 
     if pdf_filename:
         with PdfPages(pdf_filename) as pdf:
@@ -296,6 +323,17 @@ def save_as_pdf(shapes_positions, sheet_length, sheet_width, padding=10):
             ax.set_aspect('equal', adjustable='box')
 
             for shape, (x, y) in shapes_positions.items():
+                objects.append(
+                    {
+                        "type": "rectangle",
+                        "width": shape.width,
+                        "height": shape.height,
+                        "x": x,
+                        "y": y
+                    }
+                )
+                
+                
                 if shape.shape_type == 'rectangle':
                     rect = Rectangle((y , x), shape.width  , shape.height , linewidth=1, edgecolor='black', facecolor='none' )
                     ax.add_patch(rect)
@@ -307,6 +345,15 @@ def save_as_pdf(shapes_positions, sheet_length, sheet_width, padding=10):
                     ax.add_patch(square)
 
             pdf.savefig(fig)
+            
+        json_filename = pdf_filename.replace(".pdf", ".json")
+        json_filename = json_filename.replace("output" , "merged")
+        with open(json_filename, "w")  as json_file:
+            json.dump({
+                    "sheet_width": sheet_width,
+                    "sheet_height": sheet_length,
+                    "parts": objects
+                }, json_file, indent=4)
 
 def save_as_dxf(shapes_positions  ):
     global dxf_count
@@ -346,7 +393,6 @@ app.add_middleware(
 
 
 
-remaining_shapes = []
 pdf_filename = "output.pdf"  # Provide the filename for PDF
 dxf_filename = "output.dxf"  # Provide the filename for DXF
 
@@ -370,13 +416,13 @@ async def generate_files(shapes: List[Data], sheet_length: int, sheet_width: int
                 unit=shape_data.unit
             ))
 
-  
-    sorted_shapes = {}
 
     for shape in shapes_to_pack:
+        global sorted_shapes
         size_of_material = shape.size_of_material
         parts = size_of_material.split(" x ")
-        thickness = int(parts[-1].replace("THK", ""))
+        
+        thickness = int(parts[-1].split("THK")[0])
 
         if shape.material_spec not in sorted_shapes:
             sorted_shapes[shape.material_spec] = {}
@@ -391,14 +437,18 @@ async def generate_files(shapes: List[Data], sheet_length: int, sheet_width: int
 
     # Perform packing, optimization, and file generation for each thickness group
     for material, thickness_group in sorted_shapes.items():
+        global remaining_shapes
+        remaining_shapes = []
+
         for thickness, shapes_list in thickness_group.items():
             print(f"Packing shapes for {material} with thickness {thickness}")
 
             # Perform packing on the sheet
+            print("shapes_list: " + str(shapes_list))
             sp = first_fit_decreasing(shapes_list)
             group_shapes_ = group_shapes(sp)
-            sheet, positions, remaining_shapes = pack_shapes_on_sheet(group_shapes_, sheet_length, sheet_width, spacing)
-
+            sheet, positions = pack_shapes_on_sheet(group_shapes_, sheet_length, sheet_width, spacing)
+            
             # Generate and save PDFs, DXFs, and tables
             save_as_pdf(positions, sheet_length, sheet_width)
             save_visualization_as_pdf(positions, sheet_length, sheet_width)
@@ -406,9 +456,16 @@ async def generate_files(shapes: List[Data], sheet_length: int, sheet_width: int
             create_pdf_with_table(shapes_positions=positions)
             merge_pdfs(["output_file" + str(detailed_output_count) + ".pdf", "output_detailed" + str(table_count) + ".pdf"])
 
+            print("remaining shapes are : " + str(remaining_shapes))
             # If there are remaining shapes, repeat the packing and generation process
             while len(remaining_shapes) > 0:
-                positions, remaining_shapes = pack_shapes_on_sheet(remaining_shapes, sheet_length, sheet_width, spacing)
+                print(remaining_shapes)
+                sp_ = first_fit_decreasing(remaining_shapes)
+                group_shapes__ = group_shapes(sp_)
+                remaining_shapes = []
+                sheet, positions = pack_shapes_on_sheet(group_shapes__, sheet_length, sheet_width, spacing)
+                
+                # Generate and save PDFs, DXFs, and tables
                 save_as_pdf(positions, sheet_length, sheet_width)
                 save_visualization_as_pdf(positions, sheet_length, sheet_width)
                 save_as_dxf(positions)
@@ -427,7 +484,7 @@ async def delete():
     directory_path = os.getcwd()
 
     # List of file extensions to delete
-    file_extensions = ['.pdf', '.dxf', '.zip']
+    file_extensions = ['.pdf', '.dxf', '.zip', '.json']
 
     for file_name in os.listdir(directory_path):
         for ext in file_extensions:
@@ -491,17 +548,25 @@ async def download_zip_dxf():
 @app.get("/download_zip_detailed")
 async def download_zip_detailed():
     pdf_files = []  # Replace with your file paths
-    print(pdf_count)
-    for i in range(1,  merge_pdfs_count+ 1):  # Ensure pdf_count is defined
-        file = "merged" + str(i) + ".pdf"
-        pdf_files.append(file)
+    json_files = []  # Store paths of output.json files
+    for i in range(1, merge_pdfs_count + 1):
+        pdf_file = f"merged{i}.pdf"
+        pdf_files.append(pdf_file)
 
-    print(pdf_files)
-    # Create a ZIP file containing the PDFs
-    file_name = "detailed_files.zip"
-    with ZipFile(file_name, 'w') as zip_file:
-        for pdf_file in pdf_files:
+        # Assuming output.json files are saved in the same directory as the PDF files
+        json_file = f"merged{i}.json"
+        json_files.append(json_file)
+
+    # Create a ZIP file containing the PDFs and output JSON files
+    zip_file_name = "detailed_files.zip"
+    with ZipFile(zip_file_name, 'w') as zip_file:
+        for pdf_file, json_file in zip(pdf_files, json_files):
             zip_file.write(pdf_file, os.path.basename(pdf_file))
+            zip_file.write(json_file, os.path.basename(json_file))
+
+    return FileResponse(zip_file_name, media_type='application/octet-stream', filename=zip_file_name)
+
+
 
     # Set response headers for a ZIP file download
     headers = {
@@ -528,6 +593,23 @@ async def download_dxf():
 @app.get("/get_remaining")
 async def get_remaining():
     return remaining_shapes
+
+@app.get("/delete")
+async def delete():
+
+    if completed:
+        directory_path = os.getcwd()
+
+        # List of file extensions to delete
+        file_extensions = ['.pdf', '.dxf', '.zip']
+
+        for file_name in os.listdir(directory_path):
+            for ext in file_extensions:
+                if file_name.endswith(ext):
+                    file_path = os.path.join(directory_path, file_name)
+                    os.unlink(file_path)
+                    print(f"{file_path} deleted.")
+
 
 if __name__ == "__main__":
     import uvicorn
